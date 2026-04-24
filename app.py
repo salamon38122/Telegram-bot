@@ -261,7 +261,7 @@ if __name__ == "__main__":
     """)
     
     # التحقق من وجود التوكن
-    if not os.environ.get("BOT_TOKEN"):
+    if not os.environ.get("8618250652:AAG4j4sYcO29zLI7wRsIKLcunG_vWxEgZKg"):
         logger.error("❌ يرجى تعيين متغير البيئة BOT_TOKEN")
         # لا نخرج هنا لأن Flask قد يحتاج للتشغيل لعرض الخطأ
     else:
