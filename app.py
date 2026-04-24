@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import os
 import re
 import asyncio
@@ -6,11 +9,18 @@ import threading
 from pathlib import Path
 from urllib.parse import urlparse
 from datetime import datetime
-from flask import Flask, jsonify
 
+from flask import Flask, jsonify
 import yt_dlp
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
+
+# محاولة استيراد nest_asyncio لحل مشكلة حلقات asyncio المتداخلة
+try:
+    import nest_asyncio
+    nest_asyncio.apply()
+except ImportError:
+    pass
 
 # إعداد نظام تسجيل الأخطاء
 logging.basicConfig(
@@ -46,6 +56,8 @@ def is_valid_url(url: str) -> bool:
 async def cleanup_old_files(directory: Path, max_age_hours: int = 24):
     """حذف الملفات القديمة لتوفير المساحة."""
     now = datetime.now()
+    if not directory.exists():
+        return
     for file_path in directory.glob("*"):
         if file_path.is_file():
             file_age = now - datetime.fromtimestamp(file_path.stat().st_mtime)
@@ -59,11 +71,10 @@ async def cleanup_old_files(directory: Path, max_age_hours: int = 24):
 async def download_media(url: str, chat_id: int, is_audio: bool = False, update: Update = None) -> str:
     """
     تحميل الوسائط باستخدام yt-dlp وإرجاع مسار الملف.
-    يتم عرض التقدم في حالة وجود كائن update.
     """
     output_template = "%(title)s.%(ext)s"
     download_path = DOWNLOAD_DIR / f"{chat_id}"
-    download_path.mkdir(exist_ok=True)
+    download_path.mkdir(exist_ok=True, parents=True)
 
     ydl_opts = {
         'outtmpl': str(download_path / output_template),
@@ -210,8 +221,18 @@ async def cleanup_job(context):
     await cleanup_old_files(DOWNLOAD_DIR)
 
 def run_bot():
-    """تشغيل البوت في thread منفصل."""
-    BOT_TOKEN = os.environ["BOT_TOKEN"]
+    """تشغيل البوت في thread منفصل مع حل مشكلة event loop."""
+    BOT_TOKEN = os.environ.get("BOT_TOKEN")
+    if not BOT_TOKEN:
+        logger.error("❌ لم يتم العثور على BOT_TOKEN في متغيرات البيئة")
+        return
+
+    # إعادة تعيين event loop
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    except Exception as e:
+        logger.warning(f"Could not set new event loop: {e}")
     
     # إنشاء التطبيق
     application = Application.builder().token(BOT_TOKEN).build()
@@ -227,7 +248,7 @@ def run_bot():
     if job_queue:
         job_queue.run_repeating(cleanup_job, interval=21600, first=10)
 
-    print("✅ البوت يعمل الآن...")
+    logger.info("✅ البوت يعمل الآن...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 # ----------------- التشغيل الرئيسي -----------------
@@ -239,11 +260,17 @@ if __name__ == "__main__":
     ╚══════════════════════════════════════════════════════╝
     """)
     
-    # تشغيل البوت في thread منفصل
-    bot_thread = threading.Thread(target=run_bot)
-    bot_thread.daemon = True
-    bot_thread.start()
+    # التحقق من وجود التوكن
+    if not os.environ.get("BOT_TOKEN"):
+        logger.error("❌ يرجى تعيين متغير البيئة BOT_TOKEN")
+        # لا نخرج هنا لأن Flask قد يحتاج للتشغيل لعرض الخطأ
+    else:
+        # تشغيل البوت في thread منفصل
+        bot_thread = threading.Thread(target=run_bot, daemon=True)
+        bot_thread.start()
+        logger.info("تم بدء تشغيل البوت في خلفية")
     
     # تشغيل خادم Flask لمنع النوم
     port = int(os.environ.get("PORT", 5000))
+    logger.info(f"تشغيل خادم Flask على المنفذ {port}")
     app.run(host="0.0.0.0", port=port)
